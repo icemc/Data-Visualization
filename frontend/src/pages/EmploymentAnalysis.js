@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import styled from 'styled-components';
+import * as d3 from 'd3';
 import LineChart from '../components/charts/LineChart';
 import BarChart from '../components/charts/BarChart';
+import CombinedParallelCoordinatesChart from '../components/charts/CombinedParallelCoordinatesChart';
 import { employmentAPI, fetchData } from '../services/api';
 
 const PageContainer = styled.div`
@@ -157,8 +159,6 @@ const EmploymentAnalysis = () => {
   const [filters, setFilters] = useState({
     from: '2022-03-01',
     to: '2023-05-31',
-    educationLevel: 'all',
-    ageGroup: 'all',
     employerId: 'all'
   });
 
@@ -186,8 +186,8 @@ const EmploymentAnalysis = () => {
         fetchData(employmentAPI.getStability({
           from: filters.from,
           to: filters.to,
-          educationLevel: filters.educationLevel,
-          ageGroup: filters.ageGroup
+          educationLevel: 'all',
+          ageGroup: 'all'
         })),
         fetchData(employmentAPI.getTurnover({
           from: filters.from,
@@ -225,53 +225,68 @@ const EmploymentAnalysis = () => {
           month: item.month,
           avg_employment_rate: item.avg_employment_rate,
           avg_stability_score: item.avg_stability_score,
+          avg_financial_balance: item.avg_financial_balance,
+          avg_jobs_per_participant: item.avg_jobs_per_participant,
           participant_count: item.participant_count,
           educationLevel: displayEducationLevel,
           category: `${displayEducationLevel} Education`
         };
       });
 
-      // Transform turnover data for bar chart - aggregate by education level
-      const turnoverByEducation = [
-        { educationLevel: 'Low', avg_turnover_rate: 15.2 },
-        { educationLevel: 'High School', avg_turnover_rate: 12.5 },
-        { educationLevel: 'Bachelor\'s Degree', avg_turnover_rate: 8.3 },
-        { educationLevel: 'Graduate Degree', avg_turnover_rate: 5.7 },
-        { educationLevel: 'All', avg_turnover_rate: 8.8 }
-      ].filter(item => {
-        // Filter based on selected education level
-        if (filters.educationLevel === 'all') return true;
-        let filterDisplayName;
-        switch(filters.educationLevel) {
-          case 'HighSchoolOrCollege': filterDisplayName = 'High School'; break;
-          case 'Bachelors': filterDisplayName = 'Bachelor\'s Degree'; break;
-          case 'Graduate': filterDisplayName = 'Graduate Degree'; break;
-          case 'Low': filterDisplayName = 'Low'; break;
-          default: filterDisplayName = filters.educationLevel;
-        }
-        return item.educationLevel === filterDisplayName || item.educationLevel === 'All';
+      // Calculate turnover data from stability data - matching parallel coordinates calculation
+      const educationGroups = d3.group(transformedStability, d => d.educationLevel);
+      const turnoverByEducation = [];
+      
+      educationGroups.forEach((values, key) => {
+        if (values.length === 0) return;
+        const avgTurnoverRate = d3.mean(values, d => {
+          const jobsPerYear = Number(d.avg_jobs_per_participant) || 1;
+          return Math.max(0, (jobsPerYear - 1) * 100); // Same calculation as parallel coordinates
+        });
+        turnoverByEducation.push({
+          educationLevel: key,
+          avg_turnover_rate: avgTurnoverRate
+        });
       });
+      
+      // Add overall average
+      if (transformedStability.length > 0) {
+        const overallTurnoverRate = d3.mean(transformedStability, d => {
+          const jobsPerYear = Number(d.avg_jobs_per_participant) || 1;
+          return Math.max(0, (jobsPerYear - 1) * 100);
+        });
+        turnoverByEducation.push({
+          educationLevel: 'All',
+          avg_turnover_rate: overallTurnoverRate
+        });
+      }
 
-      // Create employment duration data to complement turnover rates
-      const durationData = [
-        { educationLevel: 'Low', avg_duration_months: 14.8 },
-        { educationLevel: 'High School', avg_duration_months: 18.2 },
-        { educationLevel: 'Bachelor\'s Degree', avg_duration_months: 28.5 },
-        { educationLevel: 'Graduate Degree', avg_duration_months: 42.3 },
-        { educationLevel: 'All', avg_duration_months: 29.7 }
-      ].filter(item => {
-        // Filter based on selected education level
-        if (filters.educationLevel === 'all') return true;
-        let filterDisplayName;
-        switch(filters.educationLevel) {
-          case 'HighSchoolOrCollege': filterDisplayName = 'High School'; break;
-          case 'Bachelors': filterDisplayName = 'Bachelor\'s Degree'; break;
-          case 'Graduate': filterDisplayName = 'Graduate Degree'; break;
-          case 'Low': filterDisplayName = 'Low'; break;
-          default: filterDisplayName = filters.educationLevel;
-        }
-        return item.educationLevel === filterDisplayName || item.educationLevel === 'All';
+      // Calculate employment duration data from stability data - matching parallel coordinates calculation
+      const durationData = [];
+      
+      educationGroups.forEach((values, key) => {
+        if (values.length === 0) return;
+        const avgDurationMonths = d3.mean(values, d => {
+          const jobsPerYear = Number(d.avg_jobs_per_participant) || 1;
+          return 12 / jobsPerYear; // Same calculation as parallel coordinates: months per job
+        });
+        durationData.push({
+          educationLevel: key,
+          avg_duration_months: avgDurationMonths
+        });
       });
+      
+      // Add overall average
+      if (transformedStability.length > 0) {
+        const overallDurationMonths = d3.mean(transformedStability, d => {
+          const jobsPerYear = Number(d.avg_jobs_per_participant) || 1;
+          return 12 / jobsPerYear;
+        });
+        durationData.push({
+          educationLevel: 'All',
+          avg_duration_months: overallDurationMonths
+        });
+      }
 
       // Calculate summary statistics
       const totalParticipants = transformedStability.reduce((sum, item) => sum + (item.participant_count || 0), 0);
@@ -340,32 +355,7 @@ const EmploymentAnalysis = () => {
           />
         </FilterGroup>
 
-        <FilterGroup>
-          <FilterLabel>Education Level</FilterLabel>
-          <FilterSelect
-            value={filters.educationLevel}
-            onChange={(e) => handleFilterChange('educationLevel', e.target.value)}
-          >
-            <option value="all">All Education Levels</option>
-            <option value="HighSchoolOrCollege">High School</option>
-            <option value="Bachelors">Bachelor's Degree</option>
-            <option value="Graduate">Graduate Degree</option>
-            <option value="Low">Low</option>
-          </FilterSelect>
-        </FilterGroup>
 
-        <FilterGroup>
-          <FilterLabel>Age Group</FilterLabel>
-          <FilterSelect
-            value={filters.ageGroup}
-            onChange={(e) => handleFilterChange('ageGroup', e.target.value)}
-          >
-            <option value="all">All Age Groups</option>
-            <option value="young">Young (18-30)</option>
-            <option value="middle">Middle (31-50)</option>
-            <option value="senior">Senior (51+)</option>
-          </FilterSelect>
-        </FilterGroup>
       </ControlsPanel>
 
       {/* Summary Statistics Cards */}
@@ -393,7 +383,7 @@ const EmploymentAnalysis = () => {
       {/* Employment Stability Trends - Full Width */}
       <FullWidthChart>
         <div className="chart-container">
-          <h3 className="chart-title">Employment Stability Trends</h3>
+          <h3 className="chart-title">Employment Stability Trends - Time Series</h3>
           <p className="chart-subtitle">
             Employment stability by education level over time
           </p>
@@ -422,59 +412,32 @@ const EmploymentAnalysis = () => {
         </div>
       </FullWidthChart>
 
-      <ChartsGrid>
+      {/* Combined Parallel Coordinates Analysis */}
+      <FullWidthChart>
         <div className="chart-container">
-          <h3 className="chart-title">Job Turnover Rates</h3>
+          <h3 className="chart-title">Employment Analysis - Parallel Coordinates</h3>
           <p className="chart-subtitle">
-            Annual turnover rates by education level
+            Interactive analysis showing employment patterns across education levels with switchable views
           </p>
           
           {loading && <LoadingMessage>Loading...</LoadingMessage>}
           {error && <ErrorMessage>Error: {error}</ErrorMessage>}
-          {!loading && !error && turnoverData.length > 0 && (
-            <BarChart
-              data={turnoverData}
-              width={550}
-              height={350}
-              xKey="educationLevel"
-              yKey="avg_turnover_rate"
-              xLabel="Education Level"
-              yLabel="Turnover Rate (%)"
-              color="#e53e3e"
-              formatValue={(d) => `${d.toFixed(1)}%`}
+          {!loading && !error && stabilityData.length > 0 && (
+            <CombinedParallelCoordinatesChart
+              data={stabilityData}
+              width={1200}
+              height={450}
+              colorKey="educationLevel"
+              colors={['#3182ce', '#38b2ac', '#d69e2e', '#e53e3e', '#9f7aea', '#f56565']}
             />
           )}
-          {!loading && !error && turnoverData.length === 0 && (
+          {!loading && !error && stabilityData.length === 0 && (
             <LoadingMessage>No data available for the selected filters.</LoadingMessage>
           )}
         </div>
+      </FullWidthChart>
 
-        <div className="chart-container">
-          <h3 className="chart-title">Average Job Duration</h3>
-          <p className="chart-subtitle">
-            Average employment duration by education level
-          </p>
-          
-          {loading && <LoadingMessage>Loading...</LoadingMessage>}
-          {error && <ErrorMessage>Error: {error}</ErrorMessage>}
-          {!loading && !error && employmentDuration.length > 0 && (
-            <BarChart
-              data={employmentDuration}
-              width={550}
-              height={350}
-              xKey="educationLevel"
-              yKey="avg_duration_months"
-              xLabel="Education Level"
-              yLabel="Duration (Months)"
-              color="#38b2ac"
-              formatValue={(d) => `${d.toFixed(1)} months`}
-            />
-          )}
-          {!loading && !error && employmentDuration.length === 0 && (
-            <LoadingMessage>No data available for the selected filters.</LoadingMessage>
-          )}
-        </div>
-      </ChartsGrid>
+
     </PageContainer>
   );
 };

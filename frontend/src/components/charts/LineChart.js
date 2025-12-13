@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import styled from 'styled-components';
 
@@ -10,16 +10,32 @@ const ChartContainer = styled.div`
   .line {
     fill: none;
     stroke-width: 2px;
+    cursor: pointer;
+    transition: opacity 0.3s ease;
+  }
+  
+  .line.faded {
+    opacity: 0.15;
+  }
+  
+  .line.active {
+    opacity: 1;
+    stroke-width: 3px;
   }
   
   .dot {
     stroke: #fff;
     stroke-width: 2px;
     cursor: pointer;
+    transition: opacity 0.3s ease;
   }
   
   .dot:hover {
     r: 6;
+  }
+  
+  .dot.faded {
+    opacity: 0.15;
   }
   
   .axis-label {
@@ -37,6 +53,14 @@ const ChartContainer = styled.div`
   
   .legend-item.disabled {
     opacity: 0.3;
+  }
+  
+  .legend-item.faded {
+    opacity: 0.3;
+  }
+  
+  .legend-item.active {
+    font-weight: bold;
   }
 `;
 
@@ -57,6 +81,36 @@ const LineChart = ({
 }) => {
   const svgRef = useRef();
   const tooltipRef = useRef();
+  const [selectedCategory, setSelectedCategory] = useState(null);
+
+  // Handle escape key and outside clicks
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && selectedCategory) {
+        setSelectedCategory(null);
+      }
+    };
+
+    const handleClickOutside = (event) => {
+      if (selectedCategory && svgRef.current && !svgRef.current.contains(event.target)) {
+        // Check if click is outside the entire chart container
+        const chartContainer = svgRef.current.closest('.chart-container');
+        if (chartContainer && !chartContainer.contains(event.target)) {
+          setSelectedCategory(null);
+        }
+      }
+    };
+
+    // Add event listeners
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('click', handleClickOutside);
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [selectedCategory]);
 
   useEffect(() => {
     if (!data || data.length === 0) return;
@@ -75,6 +129,18 @@ const LineChart = ({
       .attr('class', 'line-chart-svg')
       .append('g')
       .attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // Add invisible background for click detection
+    g.append('rect')
+      .attr('width', innerWidth)
+      .attr('height', innerHeight)
+      .attr('fill', 'transparent')
+      .attr('cursor', 'default')
+      .on('click', function() {
+        if (selectedCategory) {
+          setSelectedCategory(null);
+        }
+      });
 
     // Parse dates and group data
     const parseDate = d3.timeParse('%Y-%m');
@@ -183,7 +249,16 @@ const LineChart = ({
         .datum(sortedValues)
         .attr('class', `line line-${sanitizedKey}`)
         .attr('d', line)
-        .style('stroke', colorScale(key));
+        .style('stroke', colorScale(key))
+        .on('click', function(event) {
+          event.stopPropagation(); // Prevent background click
+          // Toggle selection
+          if (selectedCategory === key) {
+            setSelectedCategory(null); // Deselect if already selected
+          } else {
+            setSelectedCategory(key); // Select this category
+          }
+        });
 
       if (animate) {
         const totalLength = path.node().getTotalLength();
@@ -232,7 +307,16 @@ const LineChart = ({
         .data([...groupedData.keys()])
         .enter().append('g')
         .attr('class', 'legend-item')
-        .attr('transform', (d, i) => `translate(0, ${i * 20})`);
+        .attr('transform', (d, i) => `translate(0, ${i * 20})`)
+        .on('click', function(event, d) {
+          event.stopPropagation(); // Prevent background click
+          // Toggle selection
+          if (selectedCategory === d) {
+            setSelectedCategory(null); // Deselect if already selected
+          } else {
+            setSelectedCategory(d); // Select this category
+          }
+        });
 
       legendItems.append('rect')
         .attr('width', 12)
@@ -248,6 +332,57 @@ const LineChart = ({
     }
 
   }, [data, width, height, margin, xKey, yKey, colorKey, xLabel, yLabel, colors, showLegend, showDots, animate]);
+
+  // Handle selection styling
+  useEffect(() => {
+    const svg = d3.select(svgRef.current);
+    const sanitizeClassName = (str) => {
+      return str.replace(/[^a-zA-Z0-9-_]/g, '-').replace(/-+/g, '-');
+    };
+    
+    if (selectedCategory) {
+      const selectedSanitized = sanitizeClassName(selectedCategory);
+      
+      // Fade out all lines except selected one
+      svg.selectAll('.line')
+        .classed('faded', function() {
+          const className = d3.select(this).attr('class');
+          return !className.includes(`line-${selectedSanitized}`);
+        })
+        .classed('active', function() {
+          const className = d3.select(this).attr('class');
+          return className.includes(`line-${selectedSanitized}`);
+        });
+
+      // Fade out dots for unselected categories
+      svg.selectAll('.dot')
+        .classed('faded', function() {
+          const className = d3.select(this).attr('class');
+          return !className.includes(`dot-${selectedSanitized}`);
+        });
+
+      // Update legend items
+      svg.selectAll('.legend-item')
+        .classed('faded', function(d) {
+          return d !== selectedCategory;
+        })
+        .classed('active', function(d) {
+          return d === selectedCategory;
+        });
+    } else {
+      // Reset all styling
+      svg.selectAll('.line')
+        .classed('faded', false)
+        .classed('active', false);
+      
+      svg.selectAll('.dot')
+        .classed('faded', false);
+      
+      svg.selectAll('.legend-item')
+        .classed('faded', false)
+        .classed('active', false);
+    }
+  }, [selectedCategory]);
 
   return (
     <ChartContainer>
