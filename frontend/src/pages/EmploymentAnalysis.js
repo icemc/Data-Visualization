@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import styled from 'styled-components';
 import * as d3 from 'd3';
 import LineChart from '../components/charts/LineChart';
-import BarChart from '../components/charts/BarChart';
 import CombinedParallelCoordinatesChart from '../components/charts/CombinedParallelCoordinatesChart';
 import { employmentAPI, fetchData } from '../services/api';
 
@@ -52,20 +51,7 @@ const FilterLabel = styled.label`
   margin-bottom: 0.5rem;
 `;
 
-const FilterSelect = styled.select`
-  padding: 0.5rem;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  font-size: 0.875rem;
-  background: var(--bg-primary);
-  color: var(--text-primary);
 
-  &:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(49, 130, 206, 0.1);
-  }
-`;
 
 const FilterInput = styled.input`
   padding: 0.5rem;
@@ -82,23 +68,10 @@ const FilterInput = styled.input`
   }
 `;
 
-const ChartsGrid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
-  margin-bottom: 2rem;
-
-  @media (max-width: 1200px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
 const FullWidthChart = styled.div`
   grid-column: 1 / -1;
   margin-bottom: 2rem;
 `;
-
-
 
 const StatsGrid = styled.div`
   display: grid;
@@ -149,8 +122,6 @@ const ErrorMessage = styled.div`
 
 const EmploymentAnalysis = () => {
   const [stabilityData, setStabilityData] = useState([]);
-  const [turnoverData, setTurnoverData] = useState([]);
-  const [employmentDuration, setEmploymentDuration] = useState([]);
   const [summaryStats, setSummaryStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -167,39 +138,19 @@ const EmploymentAnalysis = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
 
-  // Format month from YYYY-MM to YY-MM
-  const formatMonth = (month) => {
-    if (!month || typeof month !== 'string') return month;
-    const match = month.match(/^(\d{4})-(\d{2})$/);
-    if (!match) return month;
-    const [, fullYear, monthPart] = match;
-    const shortYear = fullYear.slice(-2);
-    return `${shortYear}-${monthPart}`;
-  };
+
 
   const loadEmploymentData = async () => {
     try {
       setLoading(true);
       
-      // Load all employment data in parallel
-      const [stability, turnover, trends] = await Promise.all([
-        fetchData(employmentAPI.getStability({
-          from: filters.from,
-          to: filters.to,
-          educationLevel: 'all',
-          ageGroup: 'all'
-        })),
-        fetchData(employmentAPI.getTurnover({
-          from: filters.from,
-          to: filters.to,
-          employerId: filters.employerId
-        })),
-        fetchData(employmentAPI.getTrends({
-          from: filters.from,
-          to: filters.to,
-          metric: 'employment_rate'
-        }))
-      ]);
+      // Load employment stability data
+      const stability = await fetchData(employmentAPI.getStability({
+        from: filters.from,
+        to: filters.to,
+        educationLevel: 'all',
+        ageGroup: 'all'
+        }));
 
       // Transform stability data for line chart with display-friendly education level names
       const transformedStability = stability.map(item => {
@@ -233,60 +184,7 @@ const EmploymentAnalysis = () => {
         };
       });
 
-      // Calculate turnover data from stability data - matching parallel coordinates calculation
-      const educationGroups = d3.group(transformedStability, d => d.educationLevel);
-      const turnoverByEducation = [];
-      
-      educationGroups.forEach((values, key) => {
-        if (values.length === 0) return;
-        const avgTurnoverRate = d3.mean(values, d => {
-          const jobsPerYear = Number(d.avg_jobs_per_participant) || 1;
-          return Math.max(0, (jobsPerYear - 1) * 100); // Same calculation as parallel coordinates
-        });
-        turnoverByEducation.push({
-          educationLevel: key,
-          avg_turnover_rate: avgTurnoverRate
-        });
-      });
-      
-      // Add overall average
-      if (transformedStability.length > 0) {
-        const overallTurnoverRate = d3.mean(transformedStability, d => {
-          const jobsPerYear = Number(d.avg_jobs_per_participant) || 1;
-          return Math.max(0, (jobsPerYear - 1) * 100);
-        });
-        turnoverByEducation.push({
-          educationLevel: 'All',
-          avg_turnover_rate: overallTurnoverRate
-        });
-      }
 
-      // Calculate employment duration data from stability data - matching parallel coordinates calculation
-      const durationData = [];
-      
-      educationGroups.forEach((values, key) => {
-        if (values.length === 0) return;
-        const avgDurationMonths = d3.mean(values, d => {
-          const jobsPerYear = Number(d.avg_jobs_per_participant) || 1;
-          return 12 / jobsPerYear; // Same calculation as parallel coordinates: months per job
-        });
-        durationData.push({
-          educationLevel: key,
-          avg_duration_months: avgDurationMonths
-        });
-      });
-      
-      // Add overall average
-      if (transformedStability.length > 0) {
-        const overallDurationMonths = d3.mean(transformedStability, d => {
-          const jobsPerYear = Number(d.avg_jobs_per_participant) || 1;
-          return 12 / jobsPerYear;
-        });
-        durationData.push({
-          educationLevel: 'All',
-          avg_duration_months: overallDurationMonths
-        });
-      }
 
       // Calculate summary statistics
       const totalParticipants = transformedStability.reduce((sum, item) => sum + (item.participant_count || 0), 0);
@@ -296,8 +194,12 @@ const EmploymentAnalysis = () => {
       const avgStabilityScore = transformedStability.length > 0 
         ? transformedStability.reduce((sum, item) => sum + (item.avg_stability_score || 0), 0) / transformedStability.length 
         : 0;
-      const avgTurnoverRate = turnoverByEducation.length > 0 
-        ? turnoverByEducation.reduce((sum, item) => sum + (item.avg_turnover_rate || 0), 0) / turnoverByEducation.length 
+      // Calculate average turnover rate from jobs per participant
+      const avgTurnoverRate = transformedStability.length > 0 
+        ? d3.mean(transformedStability, d => {
+            const jobsPerYear = Number(d.avg_jobs_per_participant) || 1;
+            return Math.max(0, (jobsPerYear - 1) * 100);
+          }) || 0
         : 0;
 
       setSummaryStats({
@@ -308,8 +210,6 @@ const EmploymentAnalysis = () => {
       });
 
       setStabilityData(transformedStability);
-      setTurnoverData(turnoverByEducation);
-      setEmploymentDuration(durationData);
       setError(null);
     } catch (err) {
       console.error('Failed to load employment data:', err);
